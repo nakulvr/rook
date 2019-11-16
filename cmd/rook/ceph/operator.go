@@ -84,6 +84,7 @@ func startOperator(cmd *cobra.Command, args []string) error {
 	rook.LogStartupInfo(operatorCmd.Flags())
 
 	logger.Infof("starting operator")
+	logger.Infof("custom message ---- Nakul !!!")
 	context := createContext()
 	context.NetworkInfo = clusterd.NetworkInfo{}
 	context.ConfigDir = k8sutil.DataDir
