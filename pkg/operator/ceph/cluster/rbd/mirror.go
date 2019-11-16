@@ -39,7 +39,8 @@ import (
 var logger = capnslog.NewPackageLogger("github.com/rook/rook", "rbd-mirror")
 
 const (
-	appName = "rook-ceph-rbd-mirror"
+	// AppName is the ceph rbd mirror  application name
+	AppName = "rook-ceph-rbd-mirror"
 	// minimum amount of memory in MB to run the pod
 	cephRbdMirrorPodMinimumMemory uint64 = 512
 )
@@ -110,14 +111,15 @@ func (m *Mirroring) Start() error {
 
 	for i := 0; i < m.spec.Workers; i++ {
 		daemonID := k8sutil.IndexToName(i)
-		resourceName := fmt.Sprintf("%s-%s", appName, daemonID)
+		resourceName := fmt.Sprintf("%s-%s", AppName, daemonID)
 		daemonConf := &daemonConfig{
 			DaemonID:     daemonID,
 			ResourceName: resourceName,
 			DataPathMap:  config.NewDatalessDaemonDataPathMap(m.Namespace, m.dataDirHostPath),
 		}
 
-		if err := m.generateKeyring(daemonConf); err != nil {
+		keyring, err := m.generateKeyring(daemonConf)
+		if err != nil {
 			return fmt.Errorf("failed to generate keyring for %s. %+v", resourceName, err)
 		}
 
@@ -158,9 +160,16 @@ func (m *Mirroring) Start() error {
 					return fmt.Errorf("failed to recreate rbd-mirror deployment %s during del-and-recreate update attempt. %+v", resourceName, err)
 				}
 			}
-		} else {
-			logger.Infof("%s deployment started", resourceName)
 		}
+
+		if existingDeployment, err := m.context.Clientset.AppsV1().Deployments(m.Namespace).Get(d.GetName(), metav1.GetOptions{}); err != nil {
+			logger.Warningf("failed to find rbd-mirror deployment %s for keyring association: %+v", resourceName, err)
+		} else {
+			if err = m.associateKeyring(keyring, existingDeployment); err != nil {
+				logger.Warningf("failed to associate keyring with rbd-mirror deployment %s: %+v", resourceName, err)
+			}
+		}
+		logger.Infof("%s deployment started", resourceName)
 	}
 
 	// Remove extra rbd-mirror deployments if necessary
@@ -173,7 +182,7 @@ func (m *Mirroring) Start() error {
 }
 
 func (m *Mirroring) removeExtraMirrors() error {
-	opts := metav1.ListOptions{LabelSelector: fmt.Sprintf("app=%s", appName)}
+	opts := metav1.ListOptions{LabelSelector: fmt.Sprintf("app=%s", AppName)}
 	d, err := m.context.Clientset.AppsV1().Deployments(m.Namespace).List(opts)
 	if err != nil {
 		return fmt.Errorf("failed to get mirrors. %+v", err)

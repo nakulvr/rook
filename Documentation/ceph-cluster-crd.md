@@ -113,7 +113,7 @@ If this value is empty, each pod will get an ephemeral directory to store their 
 * `network`: The network settings for the cluster
   * `hostNetwork`: uses network of the hosts instead of using the SDN below the containers.
 * `mon`: contains mon related options [mon settings](#mon-settings)
-For more details on the mons and when to choose a number other than `3`, see the [mon health design doc](https://github.com/rook/rook/blob/master/design/mon-health.md).
+For more details on the mons and when to choose a number other than `3`, see the [mon health design doc](https://github.com/rook/rook/blob/master/design/ceph/mon-health.md).
 * `mgr`: manager top level section
   * `modules`: is the list of Ceph manager modules to enable
 * `rbdMirroring`: The settings for rbd mirror daemon(s). Configuring which pools or images to be mirrored must be completed in the rook toolbox by running the
@@ -132,7 +132,7 @@ For more details on the mons and when to choose a number other than `3`, see the
   * [storage selection settings](#storage-selection-settings)
   * [Storage Class Device Sets](#storage-class-device-sets)
 * `disruptionManagement`: The section for configuring management of daemon disruptions
-  * `managePodBudgets`: if `true`, the operator will create and manage PodDsruptionBudgets for OSD, Mon, RGW, and MDS daemons. OSD PDBs are managed dynamically via the strategy outlined in the [design](https://github.com/rook/rook/blob/master/design/ceph-managed-disruptionbudgets.md). The operator will block eviction of OSDs by default and unblock them safely when drains are detected.
+  * `managePodBudgets`: if `true`, the operator will create and manage PodDisruptionBudgets for OSD, Mon, RGW, and MDS daemons. OSD PDBs are managed dynamically via the strategy outlined in the [design](https://github.com/rook/rook/blob/master/design/ceph/ceph-managed-disruptionbudgets.md). The operator will block eviction of OSDs by default and unblock them safely when drains are detected.
   * `osdMaintenanceTimeout`: is a duration in minutes that determines how long an entire failureDomain like `region/zone/host` will be held in `noout` (in addition to the default DOWN/OUT interval) when it is draining. This is only relevant when  `managePodBudgets` is `true`. The default value is `30` minutes.
   * `manageMachineDisruptionBudgets`: if `true`, the operator will create and manage MachineDisruptionBudgets to ensure OSDs are only fenced when the cluster is healthy. Only available on OpenShift.
   * `machineDisruptionBudgetNamespace`: the namespace in which to watch the MachineDisruptionBudgets.
@@ -231,8 +231,10 @@ The following are the settings for Storage Class Device Sets which can be config
 
 * `name`: A name for the set.
 * `count`: The number of devices in the set.
-* `resources`: The CPU and RAM requests/limits for the devices.(Optional)
-* `placement`: The placement criteria for the devices. Default is no placement criteria.(Optional)
+* `resources`: The CPU and RAM requests/limits for the devices. (Optional)
+* `placement`: The placement criteria for the devices. (Optional) Default is no placement criteria. It is recommended to configure the placement such that the OSDs will be
+as evenly spread across nodes as possible. At a minimum, anti-affinity should be added so at least one OSD will be placed on each available nodes.
+However, if there are more OSDs than nodes, this anti-affinity will not be effective. Another placement scheme to consider is to add labels to the nodes in such a way that the OSDs can be grouped on those nodes, create multiple storageClassDeviceSets, and add node affinity to each of the device sets that will place the OSDs in those sets of nodes.
 * `portable`: If `true`, the OSDs will be allowed to move between nodes during failover. This requires a storage class that supports portability (e.g. `aws-ebs`, but not the local storage provisioner). If `false`, the OSDs will be assigned to a node permanently. Rook will configure Ceph's CRUSH map to support the portability.
 * `volumeClaimTemplates`: A list of PVC templates to use for provisioning the underlying storage devices.
   * `resources.requests.storage`: The desired capacity for the underlying storage devices.
@@ -284,7 +286,7 @@ A Placement configuration is specified (according to the kubernetes PodSpec) as:
 * `tolerations`: list of kubernetes [Toleration](https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/)
 
 The `mon` pod does not allow `Pod` affinity or anti-affinity. Instead, `mon`s have built-in anti-affinity with each other through the operator. The operator determines which nodes should run a `mon`. Each `mon` is then tied to a node with a node selector using a hostname.
-See the [mon design doc](https://github.com/rook/rook/blob/master/design/mon-health.md) for more details on the `mon` failover design.
+See the [mon design doc](https://github.com/rook/rook/blob/master/design/ceph/mon-health.md) for more details on the `mon` failover design.
 
 The Rook Ceph operator creates a Job called `rook-ceph-detect-version` to detect the full Ceph version used by the given `cephVersion.image`. The placement from the `mon` section is used for the Job.
 
@@ -300,6 +302,9 @@ You can set resource requests/limits for Rook components through the [Resource R
 * `osd`: Set resource requests/limits for OSDs
 * `rbdmirror`: Set resource requests/limits for RBD Mirrors
 * `prepareosd`: Set resource requests/limits for OSD prepare job
+* `crashcollector`: Set resource requests/limits for crash. This pod runs wherever there is a Ceph pod running.
+It scrapes for Ceph daemon core dumps and sends them to the Ceph manager crash module so that core dumps are centralized and can be easily listed/accessed.
+You can read more about the [Ceph Crash module](https://docs.ceph.com/docs/master/mgr/crash/).
 
 In order to provide the best possible experience running Ceph in containers, Rook internally enforces minimum memory limits if resource limits are passed.
 If a user configures a limit or request value that is too low, Rook will refuse to run the pod(s).
@@ -311,7 +316,10 @@ Here are the current minimum amounts of memory in MB to apply so that Rook will 
 * `mds`: 4096MB
 * `rbdmirror`: 512MB
 
-Rook does not enforce any minimum limit nor request on the prepare OSD pod. We have seen that pod taking up to 50 MB, but depending on the OSD scenario, that value might need to be higher. So setting a value to at least 50 MB should be a good start, but 100 MB might be safer.
+Rook does not enforce any minimum limit nor request on the following:
+
+* prepare OSD pod: This pod commonly takes up to 50MB, but depending on the OSD scenario may need more memory. 100MB would be more conservative.
+* crashcollector pod: This pod commonly takes around 60MB.
 
 ### Resource Requirements/Limits
 
